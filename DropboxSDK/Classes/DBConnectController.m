@@ -22,6 +22,7 @@ extern id<DBNetworkRequestDelegate> dbNetworkRequestDelegate;
 @interface DBConnectController () <UIWebViewDelegate, UIAlertViewDelegate>
 
 - (void)loadRequest;
+- (void)openUrl:(NSURL *)url;
 - (void)dismiss;
 - (void)dismissAnimated:(BOOL)animated;
 
@@ -41,7 +42,7 @@ extern id<DBNetworkRequestDelegate> dbNetworkRequestDelegate;
     if (pAlertView == alertView) return;
     alertView.delegate = nil;
     [alertView release];
-    alertView = pAlertView;
+    alertView = [pAlertView retain];
 }
 
 @synthesize hasLoaded;
@@ -54,7 +55,9 @@ extern id<DBNetworkRequestDelegate> dbNetworkRequestDelegate;
 
         self.title = @"Dropbox";
         self.navigationItem.rightBarButtonItem =
-            [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemCancel target:self action:@selector(dismiss)];
+            [[[UIBarButtonItem alloc]
+              initWithBarButtonSystemItem:UIBarButtonSystemItemCancel target:self action:@selector(cancel)]
+             autorelease];
     }
     return self;
 }
@@ -88,11 +91,12 @@ extern id<DBNetworkRequestDelegate> dbNetworkRequestDelegate;
     [activityIndicator startAnimating];
     [self.view addSubview:activityIndicator];
 
-    self.webView = [[UIWebView alloc] initWithFrame:self.view.frame];
+    self.webView = [[[UIWebView alloc] initWithFrame:self.view.frame] autorelease];
     self.webView.delegate = self;
     self.webView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.webView.scalesPageToFit = YES;
     self.webView.hidden = YES;
+    self.webView.dataDetectorTypes = UIDataDetectorTypeNone;
     [self.view addSubview:self.webView];
 
     [self loadRequest];
@@ -166,16 +170,18 @@ extern id<DBNetworkRequestDelegate> dbNetworkRequestDelegate;
         NSString *okStr = NSLocalizedString(@"OK", nil);
 
         self.alertView =
-            [[UIAlertView alloc]
-             initWithTitle:title message:message delegate:nil cancelButtonTitle:okStr otherButtonTitles:nil];
+            [[[UIAlertView alloc]
+              initWithTitle:title message:message delegate:nil cancelButtonTitle:okStr otherButtonTitles:nil]
+             autorelease];
     } else {
         // if the page hasn't loaded, this alert gives the user a way to retry
         NSString *retryStr = NSLocalizedString(@"Retry", @"Retry loading a page that has failed to load");
 
         self.alertView =
-            [[UIAlertView alloc]
-             initWithTitle:title message:message delegate:self cancelButtonTitle:NSLocalizedString(@"Cancel", @"")
-             otherButtonTitles:retryStr, nil];
+            [[[UIAlertView alloc]
+              initWithTitle:title message:message delegate:self cancelButtonTitle:NSLocalizedString(@"Cancel", @"")
+              otherButtonTitles:retryStr, nil]
+             autorelease];
     }
 
     [self.alertView show];
@@ -186,14 +192,7 @@ extern id<DBNetworkRequestDelegate> dbNetworkRequestDelegate;
     NSString *appScheme = [[DBSession sharedSession] appScheme];
     if ([[[request URL] scheme] isEqual:appScheme]) {
 
-        UIApplication *app = [UIApplication sharedApplication];
-        id<UIApplicationDelegate> delegate = app.delegate;
-
-        if ([delegate respondsToSelector:@selector(application:openURL:sourceApplication:annotation:)]) {
-            [delegate application:app openURL:[request URL] sourceApplication:@"com.getdropbox.Dropbox" annotation:nil];
-        } else if ([delegate respondsToSelector:@selector(application:handleOpenURL:)]) {
-            [delegate application:app handleOpenURL:[request URL]];
-        }
+        [self openUrl:[request URL]];
         [self dismiss];
         return NO;
     } else if ([[[request URL] scheme] isEqual:@"itms-apps"]) {
@@ -201,7 +200,7 @@ extern id<DBNetworkRequestDelegate> dbNetworkRequestDelegate;
         DBLogError(@"DropboxSDK - Can't open on simulator. Run on an iOS device to test this functionality");
 #else
         [[UIApplication sharedApplication] openURL:[request URL]];
-        [self dismissAnimated:NO];
+        [self cancelAnimated:NO];
 #endif
         return NO;
     } else if (![[[request URL] pathComponents] isEqual:[self.url pathComponents]]) {
@@ -245,6 +244,28 @@ extern id<DBNetworkRequestDelegate> dbNetworkRequestDelegate;
 - (void)loadRequest {
     NSURLRequest *urlRequest = [NSURLRequest requestWithURL:self.url cachePolicy:NSURLCacheStorageNotAllowed timeoutInterval:20];
     [self.webView loadRequest:urlRequest];
+}
+
+- (void)openUrl:(NSURL *)openUrl {
+    UIApplication *app = [UIApplication sharedApplication];
+    id<UIApplicationDelegate> delegate = app.delegate;
+
+    if ([delegate respondsToSelector:@selector(application:openURL:sourceApplication:annotation:)]) {
+        [delegate application:app openURL:openUrl sourceApplication:@"com.getdropbox.Dropbox" annotation:nil];
+    } else if ([delegate respondsToSelector:@selector(application:handleOpenURL:)]) {
+        [delegate application:app handleOpenURL:openUrl];
+    }
+}
+
+- (void)cancelAnimated:(BOOL)animated {
+    [self dismissAnimated:animated];
+
+    NSString *cancelUrl = [NSString stringWithFormat:@"%@://%@/cancel", [[DBSession sharedSession] appScheme], kDBDropboxAPIVersion];
+    [self openUrl:[NSURL URLWithString:cancelUrl]];
+}
+
+- (void)cancel {
+    [self cancelAnimated:YES];
 }
 
 - (void)dismissAnimated:(BOOL)animated {
